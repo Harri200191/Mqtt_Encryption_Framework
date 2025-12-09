@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure MQTT IoT Dashboard</title>
+    <meta name="description" content="Real-time encrypted IoT sensor monitoring dashboard with ML-based intrusion detection">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <h1 class="logo">
+                    <span class="logo-icon">🔒</span>
+                    Secure MQTT IoT Dashboard
+                </h1>
+                <div class="status-badge" id="connectionStatus">
+                    <span class="status-dot status-waiting"></span>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            
+            <!-- Alert Banner -->
+            <div class="alert alert-info" id="welcomeAlert">
+                <div class="alert-icon">ℹ️</div>
+                <div class="alert-content">
+                    <h3>Welcome to the Secure MQTT Dashboard</h3>
+                    <p>This dashboard displays real-time encrypted sensor data from your ESP32 devices. All data is AES-128 encrypted end-to-end.</p>
+                </div>
+                <button class="alert-close" onclick="closeAlert('welcomeAlert')">&times;</button>
+            </div>
+
+            <!-- Sensor Cards -->
+            <div class="cards-grid">
+                
+                <!-- Temperature Card -->
+                <div class="card card-gradient-orange">
+                    <div class="card-header">
+                        <div class="card-icon">🌡️</div>
+                        <h2>Temperature</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric-value" id="temperatureValue">--</div>
+                        <div class="metric-unit">°C</div>
+                        <div class="metric-trend" id="tempTrend"></div>
+                    </div>
+                    <div class="card-footer">
+                        <span class="card-label">Real-time Reading</span>
+                    </div>
+                </div>
+
+                <!-- Humidity Card -->
+                <div class="card card-gradient-blue">
+                    <div class="card-header">
+                        <div class="card-icon">💧</div>
+                        <h2>Humidity</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric-value" id="humidityValue">--</div>
+                        <div class="metric-unit">%</div>
+                        <div class="metric-trend" id="humTrend"></div>
+                    </div>
+                    <div class="card-footer">
+                        <span class="card-label">Real-time Reading</span>
+                    </div>
+                </div>
+
+                <!-- Sensor Info Card -->
+                <div class="card card-gradient-purple">
+                    <div class="card-header">
+                        <div class="card-icon">📡</div>
+                        <h2>Sensor Status</h2>
+                    </div>
+                    <div class="card-body card-body-info">
+                        <div class="info-row">
+                            <span class="info-label">Sensor ID:</span>
+                            <span class="info-value" id="sensorId">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Last Update:</span>
+                            <span class="info-value" id="lastUpdate">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Encryption:</span>
+                            <span class="info-value">AES-128 ✓</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Charts Section -->
+            <div class="charts-section">
+                <h2 class="section-title">Historical Trends</h2>
+                
+                <div class="charts-grid">
+                    <!-- Temperature Chart -->
+                    <div class="chart-card">
+                        <h3 class="chart-title">Temperature Over Time</h3>
+                        <div class="chart-container">
+                            <canvas id="tempChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Humidity Chart -->
+                    <div class="chart-card">
+                        <h3 class="chart-title">Humidity Over Time</h3>
+                        <div class="chart-container">
+                            <canvas id="humChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>Secure MQTT IoT System with AES-128 Encryption &amp; ML-based Intrusion Detection</p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
