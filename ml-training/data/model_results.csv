@@ -1,0 +1,15 @@
+Model,Metric,Mean,CI_Lower,CI_Upper
+DecisionTree,accuracy,0.9998,0.9997,0.9998
+DecisionTree,precision,0.9999,0.9998,0.9999
+DecisionTree,recall,0.9999,0.9999,0.9999
+DecisionTree,f1,0.9999,0.9999,0.9999
+DecisionTree,specificity,0.996,0.9945,0.9975
+DecisionTree,fpr,0.004,0.0025,0.0055
+DecisionTree,auc,0.9988,0.9981,0.9994
+kNN,accuracy,0.9997,0.9997,0.9998
+kNN,precision,0.9999,0.9998,0.9999
+kNN,recall,0.9999,0.9998,0.9999
+kNN,f1,0.9999,0.9998,0.9999
+kNN,specificity,0.9958,0.9946,0.9971
+kNN,fpr,0.0042,0.0029,0.0054
+kNN,auc,0.9979,0.9973,0.9985
