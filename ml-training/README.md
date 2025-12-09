@@ -1,34 +1,35 @@
 # ML Training Pipeline
 
-This directory contains the **research and development** code for training and evaluating machine learning models for MQTT intrusion detection.
+This directory contains the **machine learning model training** code for the MQTT Intrusion Detection System.
+
+**Training Location**: Your laptop (recommended for speed and resources)  
+**Deployment Location**: Raspberry Pi (runs the trained model)
 
 ---
 
 ## 📁 Files
 
-### `implementation.py` - Research Pipeline
-**Purpose**: Full academic research implementation from the paper  
-**"Enhancing MQTT Intrusion Detection in IoT Using Machine Learning and Feature Engineering"**
+### `train_model.py` - Production Model Training
+**Purpose**: Train and export the model for deployment to Raspberry Pi
 
 **What it does**:
 - ✅ Loads RT-IoT2022 dataset
 - ✅ Performs feature selection (PCC + Mutual Information)
-- ✅ Tests **multiple models** (Decision Tree, k-NN)
-- ✅ Runs **10-seed cross-validation**
-- ✅ Computes **95% confidence intervals**
-- ✅ Generates comprehensive metrics (accuracy, precision, recall, F1, specificity, FPR, AUC)
+- ✅ Trains Decision Tree classifier
+- ✅ **Exports .joblib file** for deployment
+- ✅ Single train/test split (fast and practical)
 
 **Use when**:
-- Reproducing paper results
-- Comparing different algorithms
-- Validating model performance
-- Research and experimentation
+- Creating/updating the production model
+- Deploying to Raspberry Pi
 
 **Run**:
 ```bash
 cd ml-training
-python implementation.py
+python train_model.py
 ```
+
+**Output**: `mqtt_ids_model.joblib` (ready to transfer to Pi)
 
 ---
 
@@ -60,19 +61,58 @@ python implementation.py
 
 **Used by**: Both `implementation.py` and `train_model.py`
 
+### `implementation.py` - Research Pipeline
+**Purpose**: Academic research, model comparison, paper reproduction
+
+**Use for**: Research papers, algorithm comparison, validation
+
+**What it does differently**:
+- ✅ Tests **multiple models** (Decision Tree + k-NN)
+- ✅ **10-seed cross-validation**
+- ✅ **95% confidence intervals**
+- ✅ **7+ performance metrics**
+- ✅ Statistical analysis
+
+**Run**:
+```bash
+python implementation.py
+```
+
 ---
 
-## 🆚 Difference from `train_model.py`
+## 🚀 **Training → Deployment Workflow**
 
-| Feature | implementation.py | train_model.py |
-|---------|-------------------|----------------|
-| **Purpose** | Research & Validation | Production Deployment |
-| **Models** | Multiple (DT, kNN) | Single (Decision Tree) |
-| **Validation** | 10-seed CV | Single train/test split |
-| **Output** | Metrics & stats | .joblib model file |
-| **Metrics** | 7+ detailed metrics | Classification report |
-| **Use Case** | Paper reproduction | IDS deployment |
-| **Speed** | Slower (rigorous) | Faster (practical) |
+### **Step 1: Train Model (On Laptop)**
+
+```bash
+# Navigate to this folder
+cd ml-training
+
+# Train the production model
+python train_model.py
+
+# Output: mqtt_ids_model.joblib
+```
+
+### **Step 2: Transfer to Raspberry Pi**
+
+```bash
+# SCP (Recommended)
+scp mqtt_ids_model.joblib pi@raspberrypi.local:~/raspberry-pi-gateway/
+
+# Or USB / Git
+```
+
+### **Step 3: Run IDS (On Pi)**
+
+```bash
+# SSH into Pi
+ssh pi@raspberrypi.local
+
+# Navigate and run
+cd ~/raspberry-pi-gateway
+sudo python3 live_ids.py
+```
 
 ---
 

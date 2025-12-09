@@ -1,0 +1,2 @@
+timestamp,model,accuracy,precision,recall,f1_score,num_features,train_samples,test_samples
+2025-12-10 00:50:29,DecisionTree,0.9997157244964262,0.9997154551000061,0.9997157244964262,0.9997154758044917,21,98493,24624
