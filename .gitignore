@@ -1,2 +1,12 @@
-.vscode
-data
+ Python
+__pycache__/
+.venv/
+
+# Environment Variables
+.env
+.env.local
+
+# Docker
+docker-compose.override.yml
+
+./ml-training/.venv/
