@@ -29,15 +29,18 @@ from collections import defaultdict
 import numpy as np
 import joblib
 import paho.mqtt.client as mqtt
+import zlib  # For CRC32 checksum verification
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
 
 # ==================== CONFIGURATION ====================
 
 # MQTT Broker Configuration
-MQTT_BROKER = "dc98974a1edd4d5883e377908c3b6d87.s1.eu.hivemq.cloud"
-MQTT_PORT = 883
+MQTT_BROKER = "localhost"
+MQTT_PORT = 1883
 MQTT_CLIENT_ID = "RaspberryPi_IDS_Gateway"
-MQTT_USERNAME = None  # Set if authentication is required
-MQTT_PASSWORD = None
+MQTT_USERNAME = None   # HiveMQ Cloud authentication
+MQTT_PASSWORD = None   # HiveMQ Cloud authentication
 SUBSCRIBE_TOPIC = "#"  # Subscribe to all topics
 
 # ML Model Configuration
@@ -47,6 +50,13 @@ MODEL_PATH = "./../ml-training/models/mqtt_ids_model.joblib"
 DETECTION_THRESHOLD = 0.5  # Confidence threshold for attack detection
 ENABLE_AUTO_BLOCK = True    # Automatically block detected attackers
 ATTACK_LOG_FILE = "./ids_attack_log.txt"
+ENABLE_CHECKSUM_VERIFICATION = True  # Verify data integrity using checksums
+
+# AES Encryption Key (MUST match ESP32 and dashboard)
+AES_KEY = bytes([
+    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
+])
 
 # Feature Extraction Settings
 PACKET_WINDOW_SIZE = 10  # Number of packets to track for feature extraction
@@ -61,7 +71,8 @@ last_packet_time = {}
 packet_stats = {
     "total_packets": 0,
     "attacks_detected": 0,
-    "ips_blocked": 0
+    "ips_blocked": 0,
+    "checksum_failures": 0
 }
 
 # ==================== MQTT CALLBACKS ====================
@@ -72,10 +83,81 @@ def on_connect(client, userdata, flags, rc):
         print(f"[✓] Connected to MQTT broker at {MQTT_BROKER}:{MQTT_PORT}")
         client.subscribe(SUBSCRIBE_TOPIC)
         print(f"[✓] Subscribed to topic: {SUBSCRIBE_TOPIC}")
+        if ENABLE_CHECKSUM_VERIFICATION:
+            print("[✓] Checksum verification enabled")
         print("[*] IDS monitoring started...\n")
     else:
         print(f"[✗] Connection failed with code {rc}")
         sys.exit(1)
+
+def calculate_crc32(data):
+    """
+    Calculate CRC32 checksum for data integrity verification
+    
+    Args:
+        data: String or bytes data
+        
+    Returns:
+        CRC32 checksum as hex string (uppercase)
+    """
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    return format(zlib.crc32(data) & 0xFFFFFFFF, '08X')
+
+def decrypt_aes(ciphertext):
+    """
+    Decrypt AES-128 ECB encrypted data
+    
+    Args:
+        ciphertext: Encrypted bytes
+        
+    Returns:
+        Decrypted string or None
+    """
+    try:
+        cipher = AES.new(AES_KEY, AES.MODE_ECB)
+        decrypted = cipher.decrypt(ciphertext)
+        
+        # Remove padding
+        try:
+            unpadded = unpad(decrypted, AES.block_size)
+        except:
+            # Manual padding removal (zeros)
+            unpadded = decrypted.rstrip(b'\x00')
+        
+        return unpadded.decode('utf-8')
+    except Exception as e:
+        return None
+
+def verify_checksum(data_with_checksum):
+    """
+    Verify checksum and extract data
+    
+    Args:
+        data_with_checksum: String in format "data|CHECKSUM"
+        
+    Returns:
+        Tuple of (data, is_valid)
+    """
+    try:
+        # Split data and checksum
+        if '|' not in data_with_checksum:
+            return data_with_checksum, None
+        
+        parts = data_with_checksum.rsplit('|', 1)
+        data = parts[0]
+        received_checksum = parts[1].strip()
+        
+        # Calculate expected checksum
+        calculated_checksum = calculate_crc32(data)
+        
+        # Verify
+        is_valid = (received_checksum == calculated_checksum)
+        
+        return data, is_valid
+        
+    except Exception as e:
+        return data_with_checksum, False
 
 def on_message(client, userdata, msg):
     """Callback when a message is received"""
@@ -85,6 +167,19 @@ def on_message(client, userdata, msg):
         topic = msg.topic
         payload = msg.payload
         payload_length = len(payload)
+        
+        # Try to decrypt and verify checksum if enabled
+        checksum_valid = None
+        if ENABLE_CHECKSUM_VERIFICATION:
+            try:
+                decrypted_data = decrypt_aes(payload)
+                if decrypted_data:
+                    _, checksum_valid = verify_checksum(decrypted_data)
+                    if checksum_valid is False:
+                        packet_stats["checksum_failures"] += 1
+                        print(f"[⚠ CHECKSUM FAILURE] Topic: {topic} | Length: {payload_length} bytes")
+            except:
+                pass  # Continue with IDS analysis even if decryption fails
         
         # Calculate time delta from last packet
         if topic in last_packet_time:
@@ -111,6 +206,8 @@ def on_message(client, userdata, msg):
             print(f"    Topic: {topic}")
             print(f"    Payload Length: {payload_length} bytes")
             print(f"    Confidence: {confidence:.2%}")
+            if checksum_valid is not None:
+                print(f"    Checksum: {'VALID' if checksum_valid else 'INVALID'}")
             
             # Extract source IP (if available)
             # In a real scenario, you'd extract this from network layer
@@ -123,7 +220,12 @@ def on_message(client, userdata, msg):
             log_attack(timestamp_str, topic, payload_length, source_ip, confidence)
             print()
         else:
-            print(f"[✓ NORMAL] Time: {timestamp_str} | Topic: {topic} | Length: {payload_length} bytes")
+            checksum_indicator = ""
+            if checksum_valid is True:
+                checksum_indicator = " | Checksum: ✓"
+            elif checksum_valid is False:
+                checksum_indicator = " | Checksum: ✗"
+            print(f"[✓ NORMAL] Time: {timestamp_str} | Topic: {topic} | Length: {payload_length} bytes{checksum_indicator}")
         
     except Exception as e:
         print(f"[✗] Error processing message: {e}")
@@ -287,6 +389,7 @@ def print_statistics():
     print("="*50)
     print(f"Total Packets Analyzed: {packet_stats['total_packets']}")
     print(f"Attacks Detected: {packet_stats['attacks_detected']}")
+    print(f"Checksum Failures: {packet_stats['checksum_failures']}")
     print(f"IPs Blocked: {packet_stats['ips_blocked']}")
     if packet_stats['total_packets'] > 0:
         attack_rate = (packet_stats['attacks_detected'] / packet_stats['total_packets']) * 100
@@ -329,10 +432,21 @@ def main():
     
     # Initialize MQTT client
     print(f"\n[*] Initializing MQTT client...")
-    client = mqtt.Client(MQTT_CLIENT_ID)
+    # Fix for paho-mqtt 2.0+ compatibility
+    try:
+        # Try paho-mqtt 2.0+ API (with callback_api_version)
+        client = mqtt.Client(client_id=MQTT_CLIENT_ID, callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
+    except TypeError:
+        # Fall back to paho-mqtt 1.x API (without callback_api_version)
+        client = mqtt.Client(MQTT_CLIENT_ID)
+    
+    # # Configure TLS for HiveMQ Cloud (port 8883)
+    # client.tls_set()
+    # print("[🔒] TLS/SSL encryption enabled")
     
     if MQTT_USERNAME:
         client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+        print(f"[🔑] Authentication configured for user: {MQTT_USERNAME}")
     
     client.on_connect = on_connect
     client.on_message = on_message

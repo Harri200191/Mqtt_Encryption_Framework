@@ -52,11 +52,13 @@ function connectWebSocket() {
 // ==================== UPDATE FUNCTIONS ====================
 
 function updateDashboard(data) {
-    const { temperature, humidity, sensor_id, timestamp, status } = data;
+    const { temperature, humidity, sensor_id, timestamp, status, checksum_valid } = data;
 
     // Update connection status
     if (status === 'connected') {
         updateConnectionStatus('connected', 'Live');
+    } else if (status === 'checksum_error') {
+        updateConnectionStatus('error', 'Checksum Error');
     }
 
     // Update temperature
@@ -82,8 +84,13 @@ function updateDashboard(data) {
         document.getElementById('lastUpdate').textContent = formatTimestamp(timestamp);
     }
 
-    // Update charts
-    addDataToCharts(timestamp, temperature, humidity);
+    // Update checksum status
+    updateChecksumStatus(checksum_valid);
+
+    // Update charts (only if checksum is valid)
+    if (checksum_valid !== false) {
+        addDataToCharts(timestamp, temperature, humidity);
+    }
 }
 
 function updateConnectionStatus(status, text) {
@@ -113,6 +120,24 @@ function updateTrend(elementId, current, previous, unit) {
     trendElement.textContent = `${arrow} ${Math.abs(diff).toFixed(1)}${unit}`;
     trendElement.style.color = color;
 }
+
+function updateChecksumStatus(checksum_valid) {
+    const indicator = document.getElementById('checksumIndicator');
+
+    if (!indicator) return;
+
+    if (checksum_valid === true) {
+        indicator.innerHTML = '<span style="color: #10b981;">✓ Valid</span>';
+        indicator.title = 'Data integrity verified';
+    } else if (checksum_valid === false) {
+        indicator.innerHTML = '<span style="color: #ef4444;">✗ Failed</span>';
+        indicator.title = 'Data integrity check failed - possible corruption';
+    } else {
+        indicator.innerHTML = '<span style="color: #6b7280;">--</span>';
+        indicator.title = 'Waiting for data';
+    }
+}
+
 
 // ==================== CHART FUNCTIONS ====================
 

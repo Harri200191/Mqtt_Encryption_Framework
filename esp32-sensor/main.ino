@@ -28,11 +28,11 @@ const char* WIFI_SSID = "YOUR_WIFI_SSID";      // Replace with your WiFi network
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";  // Replace with your WiFi password
 
 // MQTT Broker Settings
-const char* MQTT_BROKER = "dc98974a1edd4d5883e377908c3b6d87.s1.eu.hivemq.cloud";  // e.g., "192.168.1.100" or cloud IP
-const int MQTT_PORT = 8883;
+const char* MQTT_BROKER = "raspberrypi.local";  // e.g., "192.168.1.100" or cloud IP
+const int MQTT_PORT = 1883;
 const char* MQTT_CLIENT_ID = "ESP32_Sensor_001";
-const char* MQTT_USERNAME = "esp32_user";             
-const char* MQTT_PASSWORD = "Esp32_pwd";     
+const char* MQTT_USERNAME = "";             
+const char* MQTT_PASSWORD = "";     
 
 // MQTT Topic
 const char* MQTT_TOPIC = "home/sensor/data";
@@ -46,7 +46,7 @@ unsigned char AES_KEY[16] = {
 
 // DHT Sensor Configuration
 #define DHT_PIN 4           // GPIO pin connected to DHT sensor
-#define DHT_TYPE DHT22      // DHT22 (AM2302) or DHT11
+#define DHT_TYPE DHT11      // DHT11 Sensor
 
 // Timing Configuration
 #define PUBLISH_INTERVAL 5000  // Publish every 5 seconds (in milliseconds)
@@ -54,7 +54,8 @@ unsigned char AES_KEY[16] = {
 // ==================== GLOBAL OBJECTS ====================
 
 // For HiveMQ Cloud with TLS (port 8883)
-WiFiClientSecure espClient;
+// WiFiClientSecure espClient;
+WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 DHT dht(DHT_PIN, DHT_TYPE);
 
@@ -82,8 +83,8 @@ void setup() {
   
   // Configure TLS for HiveMQ Cloud (skip certificate validation for testing)
   // For production, use proper certificate validation
-  espClient.setInsecure();
-  Serial.println("TLS configured (certificate validation disabled)");
+  // espClient.setInsecure();
+  // Serial.println("TLS configured (certificate validation disabled)");
   
   // Configure MQTT broker
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
@@ -200,7 +201,31 @@ void encryptAES(unsigned char* plaintext, size_t length, unsigned char* cipherte
 }
 
 /**
- * Publish encrypted sensor data to MQTT
+ * Calculate CRC32 checksum for data integrity verification
+ * 
+ * @param data Input data buffer
+ * @param length Length of data
+ * @return CRC32 checksum value
+ */
+uint32_t calculateCRC32(const unsigned char* data, size_t length) {
+  uint32_t crc = 0xFFFFFFFF;
+  
+  for (size_t i = 0; i < length; i++) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; j++) {
+      if (crc & 1) {
+        crc = (crc >> 1) ^ 0xEDB88320;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+  
+  return ~crc;
+}
+
+/**
+ * Publish encrypted sensor data to MQTT with checksum for data integrity
  * 
  * @param temperature Temperature reading in Celsius
  * @param humidity Humidity reading in percentage
@@ -214,14 +239,24 @@ void publishEncryptedData(float temperature, float humidity) {
   
   size_t payload_len = strlen(payload);
   
+  // Calculate CRC32 checksum for data integrity
+  uint32_t checksum = calculateCRC32((unsigned char*)payload, payload_len);
+  
+  // Create payload with checksum appended (format: {"temp":...}|CRC32)
+  char payload_with_checksum[80];
+  snprintf(payload_with_checksum, sizeof(payload_with_checksum), 
+           "%s|%08X", payload, checksum);
+  
+  size_t total_len = strlen(payload_with_checksum);
+  
   // Pad to multiple of 16 bytes (AES block size)
-  size_t padded_len = ((payload_len / 16) + 1) * 16;
+  size_t padded_len = ((total_len / 16) + 1) * 16;
   unsigned char plaintext[padded_len];
   unsigned char ciphertext[padded_len];
   
   // Copy payload and pad with zeros
   memset(plaintext, 0, padded_len);
-  memcpy(plaintext, payload, payload_len);
+  memcpy(plaintext, payload_with_checksum, total_len);
   
   // Encrypt the data
   encryptAES(plaintext, padded_len, ciphertext);
@@ -230,7 +265,7 @@ void publishEncryptedData(float temperature, float humidity) {
   bool success = mqttClient.publish(MQTT_TOPIC, ciphertext, padded_len);
   
   if (success) {
-    Serial.printf("✓ Published encrypted data (%d bytes)\n", padded_len);
+    Serial.printf("✓ Published encrypted data (%d bytes) | Checksum: %08X\n", padded_len, checksum);
   } else {
     Serial.println("✗ Failed to publish!");
   }

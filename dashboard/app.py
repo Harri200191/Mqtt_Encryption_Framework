@@ -23,6 +23,7 @@ import json
 import threading
 from datetime import datetime
 from collections import deque
+import zlib  # For CRC32 checksum verification
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -61,10 +62,25 @@ latest_sensor_data = {
     "humidity": None,
     "sensor_id": None,
     "timestamp": None,
-    "status": "waiting"
+    "status": "waiting",
+    "checksum_valid": None
 }
 
 # ==================== MQTT FUNCTIONS ====================
+
+def calculate_crc32(data):
+    """
+    Calculate CRC32 checksum for data integrity verification
+    
+    Args:
+        data: String or bytes data
+        
+    Returns:
+        CRC32 checksum as hex string (uppercase)
+    """
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    return format(zlib.crc32(data) & 0xFFFFFFFF, '08X')
 
 def decrypt_aes(ciphertext):
     """
@@ -74,7 +90,7 @@ def decrypt_aes(ciphertext):
         ciphertext: Encrypted bytes
         
     Returns:
-        Decrypted JSON string
+        Decrypted string with checksum (format: data|CHECKSUM)
     """
     try:
         cipher = AES.new(AES_KEY, AES.MODE_ECB)
@@ -92,6 +108,43 @@ def decrypt_aes(ciphertext):
         print(f"[✗] Decryption error: {e}")
         return None
 
+def verify_checksum(data_with_checksum):
+    """
+    Verify checksum and extract data
+    
+    Args:
+        data_with_checksum: String in format "data|CHECKSUM"
+        
+    Returns:
+        Tuple of (data, is_valid)
+    """
+    try:
+        # Split data and checksum
+        if '|' not in data_with_checksum:
+            print("[⚠] No checksum found in data")
+            return data_with_checksum, None
+        
+        parts = data_with_checksum.rsplit('|', 1)
+        data = parts[0]
+        received_checksum = parts[1].strip()
+        
+        # Calculate expected checksum
+        calculated_checksum = calculate_crc32(data)
+        
+        # Verify
+        is_valid = (received_checksum == calculated_checksum)
+        
+        if is_valid:
+            print(f"[✓] Checksum valid: {received_checksum}")
+        else:
+            print(f"[✗] Checksum MISMATCH! Received: {received_checksum}, Calculated: {calculated_checksum}")
+        
+        return data, is_valid
+        
+    except Exception as e:
+        print(f"[✗] Checksum verification error: {e}")
+        return data_with_checksum, False
+
 def on_mqtt_connect(client, userdata, flags, rc):
     """Callback when connected to MQTT broker"""
     if rc == 0:
@@ -108,8 +161,11 @@ def on_mqtt_message(client, userdata, msg):
         decrypted_data = decrypt_aes(msg.payload)
         
         if decrypted_data:
+            # Verify checksum and extract data
+            data_str, checksum_valid = verify_checksum(decrypted_data)
+            
             # Parse JSON
-            data = json.loads(decrypted_data)
+            data = json.loads(data_str)
             
             # Extract sensor readings
             temperature = data.get('temp')
@@ -123,20 +179,23 @@ def on_mqtt_message(client, userdata, msg):
                 "humidity": humidity,
                 "sensor_id": sensor_id,
                 "timestamp": timestamp,
-                "status": "connected"
+                "status": "connected" if checksum_valid else "checksum_error",
+                "checksum_valid": checksum_valid
             })
             
-            # Add to history
-            sensor_data_history.append({
-                "timestamp": timestamp,
-                "temperature": temperature,
-                "humidity": humidity
-            })
+            # Add to history (only if checksum is valid)
+            if checksum_valid:
+                sensor_data_history.append({
+                    "timestamp": timestamp,
+                    "temperature": temperature,
+                    "humidity": humidity
+                })
             
             # Broadcast to all connected clients via WebSocket
             socketio.emit('sensor_update', latest_sensor_data)
             
-            print(f"[📊] Temp: {temperature}°C | Humidity: {humidity}% | ID: {sensor_id}")
+            checksum_status = "✓" if checksum_valid else "✗ CHECKSUM FAILED"
+            print(f"[📊] {checksum_status} | Temp: {temperature}°C | Humidity: {humidity}% | ID: {sensor_id}")
             
     except json.JSONDecodeError as e:
         print(f"[✗] JSON decode error: {e}")
@@ -150,9 +209,9 @@ def start_mqtt_client():
     mqtt_client.on_message = on_mqtt_message
     
     # Configure TLS if enabled (for cloud brokers like HiveMQ)
-    if MQTT_USE_TLS:
-        mqtt_client.tls_set()
-        print("[🔒] TLS/SSL encryption enabled")
+    # if MQTT_USE_TLS:
+    #     mqtt_client.tls_set()
+    #     print("[🔒] TLS/SSL encryption enabled")
     
     # Set credentials if provided (for cloud brokers)
     if MQTT_USERNAME and MQTT_PASSWORD:

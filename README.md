@@ -20,6 +20,7 @@ This project implements a **three-tier secure IoT architecture** with:
 ### 🔐 Security Features
 
 - **End-to-End AES-128 Encryption** on MQTT payloads
+- **CRC32 Checksum Verification** for data integrity validation
 - **Machine Learning IDS** using Decision Tree classifier
 - **Automatic IP Blocking** via iptables firewall
 - **Attack Logging** and real-time monitoring
@@ -198,11 +199,14 @@ docker run -d -p 5000:5000 \
 ### Data Flow
 
 1. **ESP32** reads DHT22 sensor → Creates JSON payload
-2. **ESP32** encrypts payload with AES-128 → Publishes to MQTT
-3. **Raspberry Pi** receives encrypted packet → Extracts metadata
-4. **ML Model** analyzes packet metadata → Detects anomalies
-5. **Firewall** blocks attacker IPs automatically (if enabled)
-6. **Dashboard** subscribes to MQTT → Decrypts payload → Displays data
+2. **ESP32** calculates CRC32 checksum → Appends to payload
+3. **ESP32** encrypts payload with AES-128 → Publishes to MQTT
+4. **Raspberry Pi** receives encrypted packet → Extracts metadata
+5. **Raspberry Pi** decrypts and verifies checksum → Detects corruption
+6. **ML Model** analyzes packet metadata → Detects anomalies
+7. **Firewall** blocks attacker IPs automatically (if enabled)
+8. **Dashboard** subscribes to MQTT → Decrypts payload → Verifies checksum → Displays data
+
 
 ---
 
@@ -316,9 +320,10 @@ MQTT_PORT = 8883
 
 | Component | Features |
 |-----------|----------|
-| **ESP32** | DHT22 sensor reading, AES-128 encryption, WiFi/MQTT connectivity |
-| **Gateway** | ML intrusion detection, automatic IP blocking, attack logging |
-| **Dashboard** | Real-time visualization, AES decryption, WebSocket updates, Docker support |
+| **ESP32** | DHT22 sensor reading, AES-128 encryption, CRC32 checksum generation, WiFi/MQTT connectivity |
+| **Gateway** | ML intrusion detection, checksum verification, automatic IP blocking, attack logging |
+| **Dashboard** | Real-time visualization, AES decryption, checksum validation, WebSocket updates, Docker support |
+
 
 ---
 
