@@ -44,7 +44,7 @@ MQTT_PASSWORD = None   # HiveMQ Cloud authentication
 SUBSCRIBE_TOPIC = "#"  # Subscribe to all topics
 
 # ML Model Configuration
-MODEL_PATH = "./../ml-training/models/mqtt_ids_model.joblib"
+MODEL_PATH = "./ml-training/models/mqtt_ids_model_5features.joblib"
 
 # IDS Settings
 DETECTION_THRESHOLD = 0.5  # Confidence threshold for attack detection
@@ -234,31 +234,32 @@ def on_message(client, userdata, msg):
 
 def extract_features(topic, payload_length, time_delta):
     """
-    Extract features from MQTT packet metadata for ML model
+    Extract 5 MQTT-specific features for ML model
     
-    The features are designed to mimic network flow statistics
-    used in the RT-IoT2022 dataset training.
+    These features match the simplified model trained with
+    train_model_5features.py
     
     Returns:
-        numpy array of features
+        numpy array of 5 features
     """
-    features = {
-        "packet_length": payload_length,
-        "time_delta": time_delta,
-        "topic_length": len(topic),
-        "packets_per_sec": 1.0 / (time_delta + 0.001),  # Avoid division by zero
-        "avg_payload_size": payload_length,
-        # Add more engineered features as needed
-    }
+    # Calculate derived metrics
+    packets_per_sec = 1.0 / (time_delta + 0.001)  # Avoid division by zero
+    bytes_per_sec = payload_length / (time_delta + 0.001)
     
-    # Convert to numpy array in the order expected by the model
-    # IMPORTANT: Match the feature order used during training
+    # Convert to numpy array with 5 features
+    # These map to RT-IoT2022 features:
+    # 1. packet_length      -> flow_pkts_payload.max
+    # 2. time_delta         -> flow_iat.std  
+    # 3. packets_per_sec    -> flow_pkts_per_sec
+    # 4. bytes_per_sec      -> payload_bytes_per_second
+    # 5. total_bytes        -> flow_pkts_payload.tot (approximated)
+    
     feature_vector = np.array([
-        features["packet_length"],
-        features["time_delta"],
-        features["topic_length"],
-        features["packets_per_sec"],
-        features["avg_payload_size"],
+        payload_length,      # Feature 0: Packet size
+        time_delta,          # Feature 1: Inter-arrival time
+        packets_per_sec,     # Feature 2: Packet rate
+        bytes_per_sec,       # Feature 3: Throughput
+        payload_length,      # Feature 4: Total bytes (approximation)
     ])
     
     return feature_vector.reshape(1, -1)
@@ -275,7 +276,9 @@ def detect_intrusion(features):
     Returns:
         (is_attack, confidence): Tuple of boolean and float
     """
-    if ml_model is None:
+    # DISABLED: Model has high false positive rate on real MQTT traffic
+    # The RT-IoT2022 dataset patterns don't match ESP32 normal traffic
+    if not ENABLE_ML_DETECTION or ml_model is None:
         return False, 0.0
     
     try:
@@ -362,16 +365,65 @@ def list_blocked_ips():
 
 def extract_source_ip(msg):
     """
-    Extract source IP from MQTT message metadata
+    Extract source IP from MQTT connection
     
-    In a production environment, this would extract the actual client IP
-    from the broker's connection metadata or from application-layer headers.
+    Uses system tools (ss/netstat) to find active MQTT connections
+    and returns the most likely source IP based on recent activity.
     
-    For this demo, we'll return a placeholder.
+    Returns:
+        IP address string or None
     """
-    # TODO: Implement actual IP extraction logic
-    # This could involve broker plugins, custom MQTT properties, or network sniffing
-    return None  # Return None for now
+    try:
+        import subprocess
+        import re
+        
+        # Use 'ss' command to get active connections on MQTT port
+        # Falls back to 'netstat' if ss is not available
+        try:
+            # Try ss first (faster, modern)
+            result = subprocess.run(
+                ['ss', '-tn', f'sport = :{MQTT_PORT}'],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            output = result.stdout
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # Fall back to netstat
+            result = subprocess.run(
+                ['netstat', '-tn'],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            output = result.stdout
+        
+        # Parse output to find connections to MQTT port
+        # Look for pattern like: tcp    0    0 192.168.1.100:1883   192.168.1.50:54321   ESTABLISHED
+        pattern = rf'(\d+\.\d+\.\d+\.\d+):(\d+)\s+(\d+\.\d+\.\d+\.\d+):(\d+).*ESTABLISHED'
+        
+        matches = re.findall(pattern, output)
+        
+        # Filter for connections on MQTT port
+        mqtt_connections = []
+        for match in matches:
+            local_ip, local_port, remote_ip, remote_port = match
+            if local_port == str(MQTT_PORT):
+                # This is an incoming MQTT connection
+                mqtt_connections.append(remote_ip)
+        
+        # Return the most recent connection (last in list)
+        if mqtt_connections:
+            # Filter out localhost
+            external_ips = [ip for ip in mqtt_connections if not ip.startswith('127.')]
+            if external_ips:
+                return external_ips[-1]  # Return most recent
+        
+        return None
+        
+    except Exception as e:
+        # Silent fail - IP extraction is best-effort
+        return None
 
 def log_attack(timestamp, topic, payload_length, source_ip, confidence):
     """Log attack details to file"""

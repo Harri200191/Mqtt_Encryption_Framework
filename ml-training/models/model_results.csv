@@ -1,2 +1,6 @@
-timestamp,model,accuracy,precision,recall,f1_score,num_features,train_samples,test_samples
-2025-12-10 00:50:29,DecisionTree,0.9997157244964262,0.9997154551000061,0.9997157244964262,0.9997154758044917,21,98493,24624
+timestamp,model,accuracy,precision,recall,f1_score,num_features,train_samples,test_samples,features,benign_samples,attack_samples
+2025-12-10 00:50:29,DecisionTree,0.9997157244964262,0.999715455100006,0.9997157244964262,0.9997154758044916,21,98493,24624,,,
+2025-12-14 18:12:39,DecisionTree_5Features,0.9998375568551008,0.9998375841576168,0.9998375568551008,0.9998373672567024,5,98493,24624,"flow_pkts_payload.max,flow_iat.std,flow_pkts_per_sec,payload_bytes_per_second,flow_pkts_payload.tot",,
+2025-12-14 22:59:32,DecisionTree_100PercentCustom,1.0,1.0,1.0,1.0,5,47734,11934,"flow_pkts_payload.max,flow_iat.std,flow_pkts_per_sec,payload_bytes_per_second,flow_pkts_payload.tot",352.0,59316.0
+2025-12-14 23:04:11,DecisionTree_100PercentCustom,0.9999555437005424,0.99995554788191,0.9999555437005424,0.9999555438090252,5,89974,22494,"flow_pkts_payload.max,flow_iat.std,flow_pkts_per_sec,payload_bytes_per_second,flow_pkts_payload.tot",53152.0,59316.0
+2025-12-14 23:07:07,DecisionTree_100PercentCustom,0.9999555437005424,0.9999555478819099,0.9999555437005424,0.9999555438090251,5,89974,22494,"flow_pkts_payload.max,flow_iat.std,flow_pkts_per_sec,payload_bytes_per_second,flow_pkts_payload.tot",53152.0,59316.0

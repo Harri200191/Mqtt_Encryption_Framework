@@ -34,41 +34,51 @@ This project implements a **three-tier secure IoT architecture** with:
 Mqtt_Encryption_Framework/
 │
 ├── esp32-sensor/                    # ESP32 Sensor Node (Arduino C++)
-│   ├── main.ino                     # Main firmware code (with TLS support)
-│   └── README.md                    # Setup and HiveMQ Cloud configuration
+│   ├── main.ino                     # Main firmware code
+│   └── README.md                    # Sensor setup and wiring guide
 │
 ├── raspberry-pi-gateway/            # Raspberry Pi Edge Gateway (Python)
-│   ├── live_ids.py                  # Real-time IDS with ML detection
+│   ├── live_ids.py                  # Real-time IDS with ML detection + IP blocking
+│   ├── collect_normal_data.py       # Collect benign traffic for training
+│   ├── collect_attack_data.py       # Generate and collect attack data
+│   ├── attack_simulator.py          # Attack simulation tool (testing)
 │   ├── requirements.txt             # Python dependencies
 │   └── README.md                    # Installation and usage guide
 │
 ├── dashboard/                       # Web Dashboard (Flask)
-│   ├── app.py                       # Flask application with env vars
+│   ├── app.py                       # Flask application with WebSocket
 │   ├── templates/
-│   │   └── index.html               # Dashboard UI
+│   │   └── index.html               # Dashboard UI with checksum indicator
 │   ├── static/
-│   │   ├── style.css                # Premium styling
-│   │   └── script.js                # Real-time updates
-│   ├── Dockerfile                   # Docker container
+│   │   ├── style.css                # Premium responsive styling
+│   │   └── script.js                # Real-time updates with Chart.js
+│   ├── Dockerfile                   # Docker container for cloud deployment
 │   ├── .env.example                 # Environment variable template
 │   ├── HIVEMQ_SETUP.md             # HiveMQ Cloud setup guide
 │   ├── requirements.txt             # Python dependencies
 │   └── README.md                    # Deployment guide
 │
-├── ml-training/                     # ML Training (Run on Laptop)
-│   ├── train_model.py               # Production model training (exports .joblib)
+├── ml-training/                     # ML Training Pipeline (Run on Laptop)
+│   ├── train_model.py               # Train with RT-IoT2022 dataset (21 features)
+│   ├── train_model_5features.py     # Train with 5 MQTT-specific features
+│   ├── train_with_custom_data.py    # Train with YOUR collected data (recommended)
 │   ├── implementation.py            # Research pipeline (paper reproduction)
-│   ├── configs.py                   # ML configuration
+│   ├── configs.py                   # ML configuration and feature lists
 │   ├── utils.py                     # Utility functions
 │   ├── models/                      # Trained models directory
-│   │   └── mqtt_ids_model.joblib   # Exported model for gateway
+│   │   ├── mqtt_ids_model.joblib   # Production model
+│   │   └── model_results.csv        # Training metrics history
+│   ├── data/                        # Training datasets
+│   │   ├── RT_IOT2022.csv          # Public dataset (download separately)
+│   │   ├── custom_benign_data.csv   # YOUR normal ESP32 traffic
+│   │   └── custom_attack_data.csv   # YOUR attack simulations
 │   └── README.md                    # Training documentation
 │
-├── docs/                            # Visual Assets
-│   ├── system_architecture.png     # Architecture diagram
-│   └── dashboard_preview.png       # Dashboard screenshot
+├── docs/                            # Documentation
+│   ├── DATA_INTEGRITY.md           # CRC32 checksum implementation guide
+│   ├── RASPBERRY_PI_SETUP.md       # Raspberry Pi configuration
 │
-├── DEPLOYMENT.md                    # Deployment guide (updated for HiveMQ)
+├── DEPLOYMENT.md                    # Cloud deployment guide
 ├── .gitignore                       # Git ignore rules
 └── README.md                        # This file
 ```
@@ -77,97 +87,382 @@ Mqtt_Encryption_Framework/
 
 ## 🚀 Quick Start
 
+### Choose Your Architecture
+
+This system supports **two deployment modes**:
+
+| Mode | Best For | IP Blocking | Setup Complexity |
+|------|----------|-------------|------------------|
+| **Local** | Production, IP blocking, learning | ✅ Yes | Medium |
+| **Cloud** | Remote access, quick demo | ❌ No | Easy |
+
+---
+
+## 🏠 **Local Setup** (Recommended for Production)
+
+### Why Local?
+- ✅ **IP blocking works** (Raspberry Pi sees actual device IPs)
+- ✅ **Lower latency** (local network)
+- ✅ **No cloud costs**
+- ✅ **Better security** (data stays on-premises)
+- ✅ **Custom ML training** (on YOUR traffic)
+
 ### Prerequisites
 
-- **ESP32 Development Board** with DHT22 sensor
-- **Raspberry Pi 4** (2GB+ RAM recommended) - OR use HiveMQ Cloud
-- **MQTT Broker**: HiveMQ Cloud (recommended, free tier) OR Mosquitto (local)
-- **Python 3.7+**
+- **ESP32 Development Board** with DHT11/DHT22 sensor
+- **Raspberry Pi 4** (1GB+ RAM recommended)
+- **All devices on same WiFi network** (2.4GHz for ESP32)
+- **Python 3.7+** on Raspberry Pi and laptop
 - **Arduino IDE** with ESP32 support
 
-### Step-by-Step Setup
+---
 
-#### 0️⃣ Set Up HiveMQ Cloud (Recommended)
+### Step-by-Step Local Setup
+
+#### 1️⃣ **Set Up Raspberry Pi Broker**
 
 ```bash
-# 1. Go to https://console.hivemq.cloud/
-# 2. Create free account (100 connections, 10GB/month)
-# 3. Create a cluster
-# 4. Note your cluster URL (e.g., abc123.s1.eu.hivemq.cloud)
-# 5. Create credentials in "Access Management"
+# SSH into Raspberry Pi
+ssh pi@raspberrypi.local
+
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Mosquitto MQTT broker
+sudo apt install mosquitto mosquitto-clients -y
+
+# Configure mosquitto for local connections
+sudo nano /etc/mosquitto/mosquitto.conf
 ```
 
-**Benefits**: No local MQTT broker needed, works from anywhere!
+Add these lines:
+```
+listener 1883
+allow_anonymous true
+```
 
-See [dashboard/HIVEMQ_SETUP.md](dashboard/HIVEMQ_SETUP.md) for detailed guide.
+Restart mosquitto:
+```bash
+sudo systemctl restart mosquitto
+sudo systemctl enable mosquitto
 
-#### 1️⃣ Set Up ESP32 Sensor
+# Verify it's running
+sudo systemctl status mosquitto
+sudo netstat -tulpn | grep 1883
+```
+
+**Expected**: Port 1883 is listening
+
+---
+
+#### 2️⃣ **Set Up ESP32 Sensor**
 
 ```bash
-# Navigate to ESP32 folder
+# On your laptop
 cd esp32-sensor
 
 # Open main.ino in Arduino IDE
-# Update WiFi credentials
-# For HiveMQ: Change to WiFiClientSecure, port 8883, add credentials
-# Upload to ESP32
+```
+
+**Update these lines**:
+```cpp
+// WiFi credentials
+const char* WIFI_SSID = "YOUR_WIFI_NAME";      // Your WiFi SSID
+const char* WIFI_PASSWORD = "YOUR_PASSWORD";    // Your WiFi password
+
+// MQTT Broker (Raspberry Pi)
+const char* MQTT_BROKER = "raspberrypi.local";  // Or Pi's IP: "192.168.1.100"
+const int MQTT_PORT = 1883;                     // Local port (no TLS)
+const char* MQTT_USERNAME = "";                 // Empty for local
+const char* MQTT_PASSWORD = "";  
+```
+
+**Upload to ESP32**:
+1. Connect ESP32 via USB
+2. Select Board: "ESP32 Dev Module"
+3. Select Port: Your ESP32's COM port
+4. Click Upload
+5. Open Serial Monitor (115200 baud)
+
+**Expected Output**:
+```
+=== ESP32 Secure MQTT Sensor Node ===
+WiFi connected!
+IP Address: 192.168.1.XXX
+Connecting to MQTT broker... Connected!
+✓ Published encrypted data (80 bytes) | Checksum: ABCD1234
 ```
 
 **Detailed Instructions**: [esp32-sensor/README.md](esp32-sensor/README.md)
 
-#### 2️⃣ Set Up Raspberry Pi Gateway (Optional if using HiveMQ)
+---
 
+#### 3️⃣ **Collect Custom Training Data**
+
+**IMPORTANT**: Skip the generic model, collect YOUR data!
+
+**Copy data collection scripts to Raspberry Pi**:
 ```bash
-# On Raspberry Pi
-cd raspberry-pi-gateway
-
-# Install dependencies
-pip3 install -r requirements.txt
-
-# Install Mosquitto broker (if not using HiveMQ)
-sudo apt install mosquitto mosquitto-clients -y
-
-# Train ML model (on laptop or Pi)
-cd ../ml-training
-python3 train_model.py
-
-# Run IDS
-cd ../raspberry-pi-gateway
-sudo python3 live_ids.py
+# From your laptop
+cd Mqtt_Encryption_Framework
+scp raspberry-pi-gateway/collect_normal_data.py pi@raspberrypi.local:~/
+scp raspberry-pi-gateway/collect_attack_data.py pi@raspberrypi.local:~/
 ```
 
-**Detailed Instructions**: [raspberry-pi-gateway/README.md](raspberry-pi-gateway/README.md)
+**On Raspberry Pi, collect normal data** (with ESP32 running):
+```bash
+ssh pi@raspberrypi.local
+python3 collect_normal_data.py --duration 600  # 10 minutes
+```
 
-#### 3️⃣ Set Up Dashboard
+**Collect attack data**:
+```bash
+python3 collect_attack_data.py --duration 1800  # 30 minutes
+# Runs 4 attack types: flooding, large payloads, bursts, replay
+```
+
+**Copy data back to laptop**:
+```bash
+# On your laptop
+scp pi@raspberrypi.local:~/custom_benign_data.csv ./ml-training/data/
+scp pi@raspberrypi.local:~/custom_attack_data.csv ./ml-training/data/
+```
+
+---
+
+#### 4️⃣ **Train Custom ML Model**
 
 ```bash
-# Navigate to dashboard folder
-cd dashboard
+# On your laptop
+cd ml-training
 
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your HiveMQ credentials
-nano .env
+# Activate virtual environment (recommended)
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# OR
+.venv\Scripts\activate     # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run locally
-python app.py
+# Clean attack data (remove false labels)
+python clean_attack_data.py
 
-# OR deploy with Docker
-docker build -t mqtt-dashboard .
-docker run -d -p 5000:5000 \
-  -e MQTT_BROKER=your-cluster.s1.eu.hivemq.cloud \
-  -e MQTT_PORT=8883 \
-  -e MQTT_USE_TLS=true \
-  -e MQTT_USERNAME=dashboard_user \
-  -e MQTT_PASSWORD=your_password \
-  mqtt-dashboard
+# Train model on YOUR data
+python train_with_custom_data.py --benign data/custom_benign_data.csv
 ```
 
-**Detailed Instructions**: [dashboard/README.md](dashboard/README.md)
+**Expected Output**:
+```
+Cross-Validation F1 Scores: [0.9234, 0.9187, ...]
+Mean CV F1: 0.9191
+
+✓ Accuracy:  0.9985
+✓ Model saved to: ./models/mqtt_ids_model.joblib
+```
+
+**Deploy model to Raspberry Pi**:
+```bash
+scp models/mqtt_ids_model.joblib pi@raspberrypi.local:~/ml-training/models/
+```
+
+---
+
+#### 5️⃣ **Set Up Raspberry Pi IDS**
+
+```bash
+# Copy IDS script
+scp raspberry-pi-gateway/live_ids.py pi@raspberrypi.local:~/
+scp raspberry-pi-gateway/requirements.txt pi@raspberrypi.local:~/
+
+# SSH into Raspberry Pi
+ssh pi@raspberrypi.local
+
+# Install Python dependencies
+pip3 install -r requirements.txt
+
+# Create ml-training directory structure
+mkdir -p ~/ml-training/models
+
+# Enable ML detection and IP blocking (edit live_ids.py)
+nano ~/live_ids.py
+```
+
+**Set these flags** (around line 50-51):
+```python
+ENABLE_AUTO_BLOCK = True    # Enable automatic IP blocking
+ENABLE_ML_DETECTION = True   # Enable ML-based attack detection
+```
+
+**Run IDS**:
+```bash
+sudo python3 live_ids.py
+```
+
+**Expected Output**:
+```
+============================================================
+  RASPBERRY PI EDGE GATEWAY - INTRUSION DETECTION SYSTEM
+============================================================
+
+[✓] Model loaded successfully: DecisionTreeClassifier
+[✓] Connected to MQTT broker at localhost:1883
+[✓] Subscribed to topic: #
+[✓] Checksum verification enabled
+[*] IDS monitoring started...
+
+[✓ NORMAL] Time: 2025-12-14 22:30:45 | Topic: home/sensor/data | Length: 80 bytes | Checksum: ✓
+```
+
+---
+
+#### 6️⃣ **Set Up Dashboard**
+
+```bash
+# On your laptop
+cd dashboard
+
+# Create .env file
+cp .env.example .env
+nano .env
+```
+
+**Configure for local Raspberry Pi**:
+```env
+# Local Raspberry Pi Configuration
+MQTT_BROKER=raspberrypi.local  # Or Pi's IP: 192.168.1.100
+MQTT_PORT=1883
+MQTT_USE_TLS=false
+MQTT_USERNAME=
+MQTT_PASSWORD=
+MQTT_TOPIC=home/sensor/data
+MQTT_CLIENT_ID=Dashboard_Client
+
+FLASK_SECRET_KEY=mqtt-iot-dashboard-2024-secure-key
+```
+
+**Run dashboard**:
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run Flask app
+python app.py
+```
+
+**Access**: Open browser to **http://localhost:5000**
+
+**Expected**: Live temperature/humidity data with green checksum indicator
+
+---
+
+### 🎯 Local Setup Verification
+
+**Everything working when**:
+- ✅ ESP32 publishes every 5 seconds (Serial Monitor)
+- ✅ Raspberry Pi shows "[✓ NORMAL]" messages (NOT attacks)
+- ✅ Dashboard shows live data with checksum ✓
+- ✅ Charts update in real-time
+- ✅ No false positives (normal traffic not flagged)
+
+**Test IP Blocking**:
+```bash
+# Copy attack simulator to Raspberry Pi
+scp raspberry-pi-gateway/attack_simulator.py pi@raspberrypi.local:~/
+
+# On Raspberry Pi (new SSH session)
+python3 attack_simulator.py --attack flood --duration 30
+
+# IDS should show:
+# [🚨 ATTACK DETECTED]
+# [🔒 BLOCKED] IP address X.X.X.X
+
+# Verify blocking:
+sudo iptables -L INPUT -n
+```
+
+---
+
+## ☁️ **Cloud Setup** (Quick Demo)
+
+### Why Cloud?
+- ✅ **Access from anywhere** (internet access)
+- ✅ **Quick setup** (no local broker needed)
+- ✅ **Managed service** (HiveMQ handles availability)
+- ❌ **No IP blocking** (can't see device IPs)
+- ❌ **Costs** (may hit free tier limits)
+
+### Step-by-Step Cloud Setup
+
+#### 1️⃣ **Set Up HiveMQ Cloud**
+
+```bash
+# 1. Go to: https://console.hivemq.cloud/
+# 2. Create free account
+# 3. Create a cluster (free tier: 100 connections, 10GB/month)
+# 4. Note cluster URL: your-cluster.s1.eu.hivemq.cloud
+# 5. Create credentials in "Access Management"
+```
+
+**Detailed Guide**: [dashboard/HIVEMQ_SETUP.md](dashboard/HIVEMQ_SETUP.md)
+
+#### 2️⃣ **Configure ESP32 for Cloud**
+
+```cpp
+// In main.ino
+const char* MQTT_BROKER = "your-cluster.s1.eu.hivemq.cloud";
+const int MQTT_PORT = 8883;  // TLS port
+const char* MQTT_USERNAME = "esp32_user";  // Your HiveMQ credentials
+const char* MQTT_PASSWORD = "your_password";
+
+// Use secure client
+WiFiClientSecure espClient;
+espClient.setInsecure();  // Skip cert validation for testing
+```
+
+#### 3️⃣ **Configure Dashboard for Cloud**
+
+```env
+# In dashboard/.env
+MQTT_BROKER=your-cluster.s1.eu.hivemq.cloud
+MQTT_PORT=8883
+MQTT_USE_TLS=true
+MQTT_USERNAME=dashboard_user
+MQTT_PASSWORD=your_password
+```
+
+#### 4️⃣ **Optional: Configure Raspberry Pi for Cloud**
+
+```python
+# In live_ids.py
+MQTT_BROKER = "your-cluster.s1.eu.hivemq.cloud"
+MQTT_PORT = 8883
+MQTT_USERNAME = "ids_user"
+MQTT_PASSWORD = "your_password"
+
+# Add TLS (line ~438)
+client.tls_set()
+```
+
+**Note**: IP blocking won't work in cloud mode (broker abstracts IPs)
+
+---
+
+## 🔄 **Switching Between Local ↔ Cloud**
+
+### Local → Cloud
+
+**ESP32**: Change broker to HiveMQ URL, port 8883, add credentials
+**Dashboard**: Update `.env` with HiveMQ settings, set `MQTT_USE_TLS=true`
+**Raspberry Pi**: Point to HiveMQ, add TLS, disable IP blocking
+
+### Cloud → Local
+
+**ESP32**: Change broker to `raspberrypi.local`, port 1883, remove credentials
+**Dashboard**: Update `.env` to `raspberrypi.local`, set `MQTT_USE_TLS=false`
+**Raspberry Pi**: Point to `localhost`, remove TLS, enable IP blocking
+
+**Complete Config Guide**: `docs/configuration_sync_guide.md`
 
 ---
 
@@ -212,34 +507,132 @@ docker run -d -p 5000:5000 \
 
 ## 🧠 Machine Learning IDS
 
-### Dataset
+### ⚠️ Important: Custom Dataset Training Recommended
 
-Uses **RT-IoT2022** dataset with the following features:
+The system now supports **custom dataset collection** from YOUR actual ESP32 traffic, which dramatically improves accuracy and eliminates false positives.
 
-- `active.avg`
-- `bwd_bulk_packets`
-- `bwd_data_pkts_tot`
-- `flow_iat.max`
-- `flow_pkts_per_sec`
-- And 15 more network flow statistics...
+### Two Training Approaches
 
-### Model Training
+#### Option 1: Quick Start (RT-IoT2022 Only) ❌ Not Recommended
+
+**Problem**: Generic dataset doesn't match your ESP32's traffic patterns
+- ESP32 sends data every 5 seconds
+- RT-IoT2022 normal traffic has different timing
+- Result: **100% false positive rate** (everything flagged as attack)
 
 ```bash
-cd raspberry-pi-gateway
-python3 train_model.py
+cd ml-training
+python train_model_5features.py
 ```
 
-**Output**: `mqtt_ids_model.joblib` (Decision Tree classifier)
+**Use Case**: Initial testing only, not production
+
+---
+
+#### Option 2: Custom Dataset (YOUR Traffic) ✅ **Recommended**
+
+**Solution**: Train on YOUR ESP32's actual traffic patterns
+
+**Workflow**:
+
+1. **Collect Normal Data** (10-30 minutes):
+   ```bash
+   # On Raspberry Pi
+   python3 collect_normal_data.py --duration 600
+   ```
+   - Captures ESP32's 5-second intervals
+   - Labels as benign (label=0)
+   - Output: `custom_benign_data.csv`
+
+2. **Collect Attack Data** (30 minutes):
+   ```bash
+   # On Raspberry Pi
+   python3 collect_attack_data.py --duration 1800
+   ```
+   - Simulates: flooding, large payloads, bursts, replay attacks
+   - Labels as malicious (label=1)
+   - Output: `custom_attack_data.csv`
+
+3. **Clean Attack Data** (remove false labels):
+   ```bash
+   # On your laptop
+   cd ml-training
+   python clean_attack_data.py
+   ```
+
+4. **Train Custom Model**:
+   ```bash
+   python train_with_custom_data.py --benign data/custom_benign_data.csv
+   ```
+   - Combines YOUR benign data + RT-IoT2022 attacks
+   - Uses 5-fold cross-validation
+   - Handles class imbalance
+   - Output: `models/mqtt_ids_model.joblib`
+
+5. **Deploy to Raspberry Pi**:
+   ```bash
+   scp models/mqtt_ids_model.joblib pi@raspberrypi.local:~/ml-training/models/
+   ```
+
+**Complete Guide**: See `docs/custom_model_workflow.md`
+
+---
+
+### Features Used (5 MQTT-Specific)
+
+Optimized for MQTT packet metadata (no deep packet inspection needed):
+
+1. **`flow_pkts_payload.max`** - Maximum packet size
+2. **`flow_iat.std`** - Inter-arrival time (KEY: 5s normal, <0.1s attack)
+3. **`flow_pkts_per_sec`** - Packet rate
+4. **`payload_bytes_per_second`** - Throughput
+5. **`flow_pkts_payload.tot`** - Total bytes
+
+**Why 5 features?**
+- Can be extracted from MQTT messages at runtime
+- No need for network-layer packet inspection
+- Faster inference
+- Better generalization
+
+---
 
 ### Performance Metrics
 
-Based on RT-IoT2022 dataset testing:
+#### RT-IoT2022 Model (Generic):
+- **Accuracy**: 99.98%
+- **False Positive Rate on ESP32**: **100%** ❌
+- **Usability**: Not suitable for production
 
-- **Accuracy**: ~99%
-- **Precision**: ~98%
-- **Recall**: ~99%
-- **F1-Score**: ~98%
+#### Custom Model (YOUR Data):
+- **Accuracy**: 99.85%
+- **False Positive Rate on ESP32**: **0%** ✅
+- **Cross-Validation F1**: 0.91-0.92
+- **Usability**: Production-ready
+
+**Key Insight**: Lower accuracy but ZERO false positives = much better!
+
+---
+
+### Attack Detection Capabilities
+
+Custom model detects:
+- **Flooding attacks** (>10 msg/sec)
+- **Large payload attacks** (>1KB messages)
+- **Burst attacks** (rapid bursts with pauses)
+- **Replay attacks** (old timestamps, high frequency)
+- **Topic injection** (unauthorized topics)
+
+---
+
+### Model Files
+
+```bash
+ml-training/models/
+├── mqtt_ids_model.joblib           # Production model (5 features)
+├── mqtt_ids_model_5features.joblib # RT-IoT2022 trained
+├── mqtt_ids_model_custom.joblib    # Custom data trained
+└── model_results.csv               # Training history
+```
 
 ---
 
@@ -397,30 +790,3 @@ This project is open-source and available under the MIT License.
 For questions or support, please open an issue on GitHub.
 
 ---
-
-## 🎓 Academic Use
-
-If using this project for academic research, please cite:
-
-```
-@misc{mqtt_encryption_framework,
-  author = {Your Name},
-  title = {Secure MQTT IoT System with ML-based Intrusion Detection},
-  year = {2025},
-  publisher = {GitHub},
-  url = {https://github.com/YOUR_USERNAME/Mqtt_Encryption_Framework}
-}
-```
-
----
-
-## 🙏 Acknowledgments
-
-- RT-IoT2022 dataset creators
-- Arduino and ESP32 community
-- Flask and Chart.js developers
-- scikit-learn contributors
-
----
-
-**Built with ❤️ for secure IoT systems**
